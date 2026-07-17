@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "repository": "MelodicBloom/aether",
+  "classification": { "archetype": "webgl-application", "maturity": "experimental", "criticality": "high" },
+  "runtime": { "node": "20", "package_manager": "npm", "lockfile": "package-lock.json" },
+  "commands": { "lint": "npm run lint", "typecheck": "npm run typecheck", "test": null, "build": "npm run build", "specialized": "test -s docs/verification/WEBGL_SMOKE_TEST.md && test -s docs/verification/ACCESSIBILITY_CHECKLIST.md" },
+  "surfaces": {
+    "static": ["typescript", "next-build", "frozen-dependencies"],
+    "behavioral": ["gallery-filtering", "inspect-drawer", "webgl-context-recovery"],
+    "visual": ["shader-render", "fallback-state", "viewport-resize"],
+    "accessibility": ["keyboard-drawer", "focus-return", "reduced-motion", "canvas-fallback"],
+    "performance": ["60-second-runtime-observation", "renderer-cleanup"],
+    "deployment": ["none-in-this-slice"]
+  },
+  "promotion": { "mode": "observe", "required_gates": ["lockfile", "typecheck", "lint", "build", "webgl-smoke-plan", "accessibility-plan"], "human_approval": true },
+  "evidence": { "retention_days": 30, "artifact_paths": [".next"], "known_omissions": ["no automated unit tests", "manual WebGL context-loss evidence pending", "manual keyboard and reduced-motion evidence pending"] }
+}
