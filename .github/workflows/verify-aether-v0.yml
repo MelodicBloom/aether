@@ -1,0 +1,108 @@
+name: Verify AETHER v0
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/aether-runnable-gallery-v0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-aether-v0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Frozen install, static checks, build, and evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require npm lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f package-lock.json ]]; then
+            echo "::error::package-lock.json is required for frozen npm ci verification."
+            echo "No fallback to npm install is permitted because that would not be reproducible."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Frozen dependency installation
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Record declared test surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification-evidence
+          node <<'NODE' > verification-evidence/test-surface.json
+          const pkg = require('./package.json');
+          const scripts = pkg.scripts || {};
+          const report = {
+            generatedAt: new Date().toISOString(),
+            repository: process.env.GITHUB_REPOSITORY,
+            commit: process.env.GITHUB_SHA,
+            declaredScripts: scripts,
+            surfaces: {
+              frozenInstall: 'npm ci',
+              typecheck: scripts.typecheck || null,
+              lint: scripts.lint || null,
+              build: scripts.build || null,
+              unit: scripts.test || null,
+              e2e: scripts.e2e || scripts['test:e2e'] || null,
+              visualRegression: scripts.visual || scripts['test:visual'] || null,
+              webglSmoke: 'manual plan documented in docs/verification/WEBGL_SMOKE_TEST.md',
+              accessibility: 'manual checklist documented in docs/verification/ACCESSIBILITY_CHECKLIST.md'
+            },
+            interpretation: 'null means not declared, not passed'
+          };
+          process.stdout.write(JSON.stringify(report, null, 2));
+          NODE
+          cat verification-evidence/test-surface.json
+
+      - name: Create deterministic build archive and digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d .next
+          tar --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf verification-evidence/aether-next-build.tar .next
+          sha256sum verification-evidence/aether-next-build.tar \
+            | tee verification-evidence/aether-next-build.sha256
+
+      - name: Upload retained verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-v0-verification-${{ github.sha }}
+          path: |
+            verification-evidence/test-surface.json
+            verification-evidence/aether-next-build.sha256
+            verification-evidence/aether-next-build.tar
+          if-no-files-found: error
+          retention-days: 30
