@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    uses: MelodicBloom/.github/.github/workflows/reusable-defensible-vertical-slice.yml@d6b1d5a950a2d0166e174f7ad3560dfbf0f54abb
+    uses: MelodicBloom/.github/.github/workflows/reusable-defensible-vertical-slice.yml@214f41c65517d3158f50e99a54141566c45ee6a6
     with:
       node-version: "20"
       package-manager: npm
