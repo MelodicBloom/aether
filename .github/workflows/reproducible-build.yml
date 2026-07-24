@@ -53,8 +53,15 @@ jobs:
       - name: Strict typecheck
         run: npm run typecheck
 
-      - name: Lint
-        run: npm run lint
+      - name: Capture lint evidence
+        shell: bash
+        run: |
+          set +e
+          npm run lint 2>&1 | tee artifacts/lint.log
+          lint_code=${PIPESTATUS[0]}
+          echo "lint_exit_code=$lint_code" >> "$GITHUB_ENV"
+          echo "$lint_code" > artifacts/lint.exit-code
+          exit 0
 
       - name: Production build A
         run: npm run build
@@ -87,7 +94,14 @@ jobs:
             | xargs -0 sha256sum > artifacts/build-b.sha256
 
       - name: Compare normalized manifests
-        run: diff -u artifacts/build-a.sha256 artifacts/build-b.sha256
+        shell: bash
+        run: |
+          set +e
+          diff -u artifacts/build-a.sha256 artifacts/build-b.sha256 | tee artifacts/build-manifest.diff
+          manifest_code=${PIPESTATUS[0]}
+          echo "manifest_exit_code=$manifest_code" >> "$GITHUB_ENV"
+          echo "$manifest_code" > artifacts/build-manifest.exit-code
+          exit 0
 
       - name: Record WebGL evidence inventory
         run: node tests/webgl-evidence.mjs
@@ -103,14 +117,17 @@ jobs:
             ? crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex')
             : null;
           const receipt = {
-            schemaVersion: 'aether.reproducible-build.v0.1',
+            schemaVersion: 'aether.reproducible-build.v0.2',
             commit: process.env.GITHUB_SHA,
             generatedAt: new Date().toISOString(),
             generatedLockfile: process.env.generated_lockfile === 'true',
             packageJsonSha256: hash('package.json'),
             packageLockSha256: hash('package-lock.json'),
+            lintExitCode: Number(process.env.lint_exit_code ?? -1),
+            buildManifestExitCode: Number(process.env.manifest_exit_code ?? -1),
             manifestASha256: hash('artifacts/build-a.sha256'),
             manifestBSha256: hash('artifacts/build-b.sha256'),
+            manifestDiffSha256: hash('artifacts/build-manifest.diff'),
             webglEvidenceSha256: hash('artifacts/webgl-evidence.json'),
             exclusions: ['.next/cache/**', '.next/BUILD_ID', '*.trace'],
           };
@@ -126,3 +143,18 @@ jobs:
           path: artifacts/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: Enforce reproducibility gates
+        if: always()
+        shell: bash
+        run: |
+          failures=0
+          if [ "${lint_exit_code:-1}" -ne 0 ]; then
+            echo "Lint gate failed; see artifacts/lint.log."
+            failures=1
+          fi
+          if [ "${manifest_exit_code:-1}" -ne 0 ]; then
+            echo "Normalized build manifests differ; see artifacts/build-manifest.diff."
+            failures=1
+          fi
+          exit "$failures"
