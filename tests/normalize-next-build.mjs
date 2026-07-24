@@ -40,11 +40,15 @@ for (const filePath of files) {
   const source = await readFile(filePath);
   const normalizedContent = normalizeBuffer(source, filePath);
   const digest = createHash('sha256').update(normalizedContent).digest('hex');
-  entries.push(`${digest}  ${normalizedPath}`);
+  entries.push({ path: normalizedPath, digest });
 }
 
-entries.sort((left, right) => left.localeCompare(right));
-await writeFile(output, `${entries.join('\n')}\n`, 'utf8');
+entries.sort((left, right) => left.path.localeCompare(right.path));
+await writeFile(
+  output,
+  `${entries.map(({ digest, path }) => `${digest}  ${path}`).join('\n')}\n`,
+  'utf8',
+);
 
 async function walk(directory) {
   const results = [];
@@ -77,8 +81,15 @@ function normalizeBuffer(buffer, filePath) {
   return Buffer.from(normalizeText(text), 'utf8');
 }
 
-function normalizeJson(value) {
-  if (Array.isArray(value)) return value.map(normalizeJson);
+function normalizeJson(value, parentKey = '') {
+  if (Array.isArray(value)) {
+    const normalizedItems = value.map((item) => normalizeJson(item, parentKey));
+    if (parentKey === 'files' && normalizedItems.every((item) => typeof item === 'string')) {
+      return [...normalizedItems].sort((left, right) => left.localeCompare(right));
+    }
+    return normalizedItems;
+  }
+
   if (value === null || typeof value !== 'object') {
     return typeof value === 'string' ? normalizeText(value) : value;
   }
@@ -87,7 +98,7 @@ function normalizeJson(value) {
   for (const [key, child] of Object.entries(value)) {
     normalized[key] = VOLATILE_JSON_KEYS.has(key)
       ? `<VOLATILE:${key}>`
-      : normalizeJson(child);
+      : normalizeJson(child, key);
   }
   return normalized;
 }
