@@ -8,6 +8,7 @@ on:
       - src/**
       - public/**
       - tests/webgl-evidence.mjs
+      - tests/normalize-next-build.mjs
       - docs/verification/REPRODUCIBLE_BUILD_EVIDENCE.md
       - .github/workflows/reproducible-build.yml
   workflow_dispatch:
@@ -66,7 +67,7 @@ jobs:
       - name: Production build A
         run: npm run build
 
-      - name: Record normalized manifest A
+      - name: Record build A manifests
         shell: bash
         run: |
           find .next -type f \
@@ -75,14 +76,15 @@ jobs:
             ! -name '*.trace' \
             -print0 \
             | sort -z \
-            | xargs -0 sha256sum > artifacts/build-a.sha256
+            | xargs -0 sha256sum > artifacts/build-a.raw.sha256
+          node tests/normalize-next-build.mjs .next artifacts/build-a.normalized.sha256
 
       - name: Clean and production build B
         run: |
           rm -rf .next
           npm run build
 
-      - name: Record normalized manifest B
+      - name: Record build B manifests
         shell: bash
         run: |
           find .next -type f \
@@ -91,16 +93,29 @@ jobs:
             ! -name '*.trace' \
             -print0 \
             | sort -z \
-            | xargs -0 sha256sum > artifacts/build-b.sha256
+            | xargs -0 sha256sum > artifacts/build-b.raw.sha256
+          node tests/normalize-next-build.mjs .next artifacts/build-b.normalized.sha256
 
-      - name: Compare normalized manifests
+      - name: Compare raw manifests for information
         shell: bash
         run: |
           set +e
-          diff -u artifacts/build-a.sha256 artifacts/build-b.sha256 | tee artifacts/build-manifest.diff
-          manifest_code=${PIPESTATUS[0]}
-          echo "manifest_exit_code=$manifest_code" >> "$GITHUB_ENV"
-          echo "$manifest_code" > artifacts/build-manifest.exit-code
+          diff -u artifacts/build-a.raw.sha256 artifacts/build-b.raw.sha256 \
+            | tee artifacts/build-raw.diff
+          raw_code=${PIPESTATUS[0]}
+          echo "raw_manifest_exit_code=$raw_code" >> "$GITHUB_ENV"
+          echo "$raw_code" > artifacts/build-raw.exit-code
+          exit 0
+
+      - name: Compare narrowly normalized manifests
+        shell: bash
+        run: |
+          set +e
+          diff -u artifacts/build-a.normalized.sha256 artifacts/build-b.normalized.sha256 \
+            | tee artifacts/build-normalized.diff
+          normalized_code=${PIPESTATUS[0]}
+          echo "normalized_manifest_exit_code=$normalized_code" >> "$GITHUB_ENV"
+          echo "$normalized_code" > artifacts/build-normalized.exit-code
           exit 0
 
       - name: Record WebGL evidence inventory
@@ -117,19 +132,29 @@ jobs:
             ? crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex')
             : null;
           const receipt = {
-            schemaVersion: 'aether.reproducible-build.v0.2',
+            schemaVersion: 'aether.reproducible-build.v0.3',
             commit: process.env.GITHUB_SHA,
             generatedAt: new Date().toISOString(),
             generatedLockfile: process.env.generated_lockfile === 'true',
             packageJsonSha256: hash('package.json'),
             packageLockSha256: hash('package-lock.json'),
             lintExitCode: Number(process.env.lint_exit_code ?? -1),
-            buildManifestExitCode: Number(process.env.manifest_exit_code ?? -1),
-            manifestASha256: hash('artifacts/build-a.sha256'),
-            manifestBSha256: hash('artifacts/build-b.sha256'),
-            manifestDiffSha256: hash('artifacts/build-manifest.diff'),
+            rawManifestExitCode: Number(process.env.raw_manifest_exit_code ?? -1),
+            normalizedManifestExitCode: Number(process.env.normalized_manifest_exit_code ?? -1),
+            rawManifestASha256: hash('artifacts/build-a.raw.sha256'),
+            rawManifestBSha256: hash('artifacts/build-b.raw.sha256'),
+            normalizedManifestASha256: hash('artifacts/build-a.normalized.sha256'),
+            normalizedManifestBSha256: hash('artifacts/build-b.normalized.sha256'),
             webglEvidenceSha256: hash('artifacts/webgl-evidence.json'),
-            exclusions: ['.next/cache/**', '.next/BUILD_ID', '*.trace'],
+            normalizedFields: [
+              'Next BUILD_ID value and BUILD_ID path segment',
+              'workspace absolute path',
+              'previewModeId',
+              'previewModeSigningKey',
+              'previewModeEncryptionKey',
+              'encryptionKey'
+            ],
+            excludedFiles: ['.next/cache/**', '.next/BUILD_ID', '.next/trace', '*.trace'],
           };
           fs.mkdirSync('artifacts', { recursive: true });
           fs.writeFileSync('artifacts/reproducible-build-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
@@ -153,8 +178,8 @@ jobs:
             echo "Lint gate failed; see artifacts/lint.log."
             failures=1
           fi
-          if [ "${manifest_exit_code:-1}" -ne 0 ]; then
-            echo "Normalized build manifests differ; see artifacts/build-manifest.diff."
+          if [ "${normalized_manifest_exit_code:-1}" -ne 0 ]; then
+            echo "Narrowly normalized build manifests differ; see artifacts/build-normalized.diff."
             failures=1
           fi
           exit "$failures"
