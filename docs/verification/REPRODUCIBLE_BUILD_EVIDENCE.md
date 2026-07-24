@@ -15,12 +15,13 @@ package.json
 → lockfile SHA-256
 → npm ci
 → strict TypeScript
-→ lint
+→ captured lint result
 → production build A
-→ normalized file manifest A
+→ raw + narrowly normalized manifests A
 → clean production build B
-→ normalized file manifest B
-→ manifest comparison
+→ raw + narrowly normalized manifests B
+→ raw variance report
+→ normalized comparison gate
 → WebGL evidence inventory
 → retained artifact receipt
 ```
@@ -33,20 +34,46 @@ It is not canonical until:
 
 1. dependency resolution succeeds;
 2. `npm ci` succeeds using that candidate;
-3. typecheck, lint, and both production builds succeed;
-4. the normalized build manifests match;
-5. the lockfile is reviewed and committed in a lockfile-only commit;
-6. a later workflow run uses the committed lockfile without regeneration.
+3. typecheck and both production builds succeed;
+4. lint has a noninteractive, reviewed configuration;
+5. the narrowly normalized build manifests match;
+6. the lockfile is reviewed and committed in a lockfile-only commit;
+7. a later workflow run uses the committed lockfile without regeneration.
 
-## Build-manifest normalization
+## Raw versus normalized reproducibility
 
-The comparison excludes:
+The workflow preserves two separate comparisons.
+
+### Raw manifest
+
+Every regular output file except cache, `BUILD_ID`, and trace files is SHA-256 hashed without rewriting. Raw differences are retained as evidence and are not treated as identical.
+
+Next.js currently introduces build-specific values including generated build IDs, preview-mode credentials, and server-action encryption keys. Raw output may therefore differ even when source and dependencies are unchanged.
+
+### Narrowly normalized manifest
+
+`tests/normalize-next-build.mjs` normalizes only declared framework/runtime variance:
+
+- the current Next `BUILD_ID` value and its path segment;
+- the absolute workspace path;
+- `previewModeId`;
+- `previewModeSigningKey`;
+- `previewModeEncryptionKey`;
+- `encryptionKey`.
+
+It canonicalizes JSON key order and leaves all other content and binary files unchanged. The normalized manifest is the reproducibility gate. Any additional normalization requires a reviewed documentation change; unknown variance must not be hidden.
+
+Excluded files are:
 
 - `.next/cache/**`;
 - `.next/BUILD_ID`;
-- trace files whose content contains environment-specific absolute paths.
+- `.next/trace` and `*.trace`.
 
-All remaining regular files are sorted and hashed with SHA-256. A mismatch blocks reproducibility approval and the differing files must be reported rather than normalized away casually.
+## Lint evidence
+
+The current `next lint` command opens an interactive configuration prompt because the repository has no committed ESLint configuration. The workflow records the prompt and exit status, continues gathering build evidence, and fails at the final gate.
+
+A separate bounded remediation must define ESLint configuration and any required development dependencies. This evidence PR does not change `package.json` or silently choose a lint profile.
 
 ## WebGL evidence classification
 
@@ -62,12 +89,13 @@ Static inspection is not represented as runtime proof.
 
 - WebGL-unavailable visible fallback;
 - context loss and restoration;
-- shader, buffer, and program disposal;
 - shader-fetch cancellation;
 - reduced-motion render-loop behavior;
 - nonblank canvas browser smoke test;
 - keyboard drawer behavior and focus return;
 - canvas fallback semantics.
+
+Current source inspection does prove a client boundary, animation-frame cleanup, explicit GPU resource-deletion calls, and a canvas accessible name. Runtime tests remain necessary.
 
 These gaps do not authorize source changes in this PR. Each must become a separate bounded issue after the build contract is stable.
 
@@ -79,6 +107,7 @@ Allowed:
 .github/workflows/reproducible-build.yml
 docs/verification/REPRODUCIBLE_BUILD_EVIDENCE.md
 tests/webgl-evidence.mjs
+tests/normalize-next-build.mjs
 package-lock.json  # only after artifact review
 ```
 
@@ -95,8 +124,15 @@ secrets
 
 ## Approval gate
 
-Keep the PR draft until a committed lockfile is used by `npm ci` and the two normalized build manifests match on the same commit. WebGL `not-proven` items must be filed as explicit remediation issues before the verification PRs can merge.
+Keep the PR draft until:
+
+- a committed lockfile is used by `npm ci`;
+- strict typecheck and both builds pass;
+- narrowly normalized manifests match;
+- lint is noninteractive and passes;
+- WebGL `not-proven` items are filed as explicit remediation issues;
+- Jennipher approves the exact evidence-only inventory.
 
 ## Rollback
 
-Close the PR. No product or dependency manifest behavior is changed until the lockfile is separately reviewed and committed.
+Close the PR. No product or dependency-manifest behavior is changed until the lockfile and separate lint remediation are reviewed.
