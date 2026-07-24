@@ -1,0 +1,185 @@
+name: AETHER Reproducible Build Evidence
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - src/**
+      - public/**
+      - tests/webgl-evidence.mjs
+      - tests/normalize-next-build.mjs
+      - docs/verification/REPRODUCIBLE_BUILD_EVIDENCE.md
+      - .github/workflows/reproducible-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Create artifact directory
+        run: mkdir -p artifacts
+
+      - name: Generate lockfile candidate when absent
+        run: |
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            echo "generated_lockfile=true" >> "$GITHUB_ENV"
+          else
+            echo "generated_lockfile=false" >> "$GITHUB_ENV"
+          fi
+          sha256sum package.json > artifacts/package-json.sha256
+          sha256sum package-lock.json > artifacts/package-lock.sha256
+          cp package-lock.json artifacts/package-lock.candidate.json
+
+      - name: Frozen install
+        run: npm ci --no-audit --no-fund
+
+      - name: Strict typecheck
+        run: npm run typecheck
+
+      - name: Capture lint evidence
+        shell: bash
+        run: |
+          set +e
+          npm run lint 2>&1 | tee artifacts/lint.log
+          lint_code=${PIPESTATUS[0]}
+          echo "lint_exit_code=$lint_code" >> "$GITHUB_ENV"
+          echo "$lint_code" > artifacts/lint.exit-code
+          exit 0
+
+      - name: Production build A
+        run: npm run build
+
+      - name: Record build A manifests
+        shell: bash
+        run: |
+          find .next -type f \
+            ! -path '.next/cache/*' \
+            ! -name 'BUILD_ID' \
+            ! -name '*.trace' \
+            -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > artifacts/build-a.raw.sha256
+          node tests/normalize-next-build.mjs .next artifacts/build-a.normalized.sha256
+
+      - name: Clean and production build B
+        run: |
+          rm -rf .next
+          npm run build
+
+      - name: Record build B manifests
+        shell: bash
+        run: |
+          find .next -type f \
+            ! -path '.next/cache/*' \
+            ! -name 'BUILD_ID' \
+            ! -name '*.trace' \
+            -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > artifacts/build-b.raw.sha256
+          node tests/normalize-next-build.mjs .next artifacts/build-b.normalized.sha256
+
+      - name: Compare raw manifests for information
+        shell: bash
+        run: |
+          set +e
+          diff -u artifacts/build-a.raw.sha256 artifacts/build-b.raw.sha256 \
+            | tee artifacts/build-raw.diff
+          raw_code=${PIPESTATUS[0]}
+          echo "raw_manifest_exit_code=$raw_code" >> "$GITHUB_ENV"
+          echo "$raw_code" > artifacts/build-raw.exit-code
+          exit 0
+
+      - name: Compare narrowly normalized manifests
+        shell: bash
+        run: |
+          set +e
+          diff -u artifacts/build-a.normalized.sha256 artifacts/build-b.normalized.sha256 \
+            | tee artifacts/build-normalized.diff
+          normalized_code=${PIPESTATUS[0]}
+          echo "normalized_manifest_exit_code=$normalized_code" >> "$GITHUB_ENV"
+          echo "$normalized_code" > artifacts/build-normalized.exit-code
+          exit 0
+
+      - name: Record WebGL evidence inventory
+        run: node tests/webgl-evidence.mjs
+
+      - name: Create execution receipt
+        if: always()
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const hash = (path) => fs.existsSync(path)
+            ? crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex')
+            : null;
+          const receipt = {
+            schemaVersion: 'aether.reproducible-build.v0.3',
+            commit: process.env.GITHUB_SHA,
+            generatedAt: new Date().toISOString(),
+            generatedLockfile: process.env.generated_lockfile === 'true',
+            packageJsonSha256: hash('package.json'),
+            packageLockSha256: hash('package-lock.json'),
+            lintExitCode: Number(process.env.lint_exit_code ?? -1),
+            rawManifestExitCode: Number(process.env.raw_manifest_exit_code ?? -1),
+            normalizedManifestExitCode: Number(process.env.normalized_manifest_exit_code ?? -1),
+            rawManifestASha256: hash('artifacts/build-a.raw.sha256'),
+            rawManifestBSha256: hash('artifacts/build-b.raw.sha256'),
+            normalizedManifestASha256: hash('artifacts/build-a.normalized.sha256'),
+            normalizedManifestBSha256: hash('artifacts/build-b.normalized.sha256'),
+            webglEvidenceSha256: hash('artifacts/webgl-evidence.json'),
+            normalizedFields: [
+              'Next BUILD_ID value and BUILD_ID path segment',
+              'workspace absolute path',
+              'previewModeId',
+              'previewModeSigningKey',
+              'previewModeEncryptionKey',
+              'encryptionKey'
+            ],
+            excludedFiles: ['.next/cache/**', '.next/BUILD_ID', '.next/trace', '*.trace'],
+          };
+          fs.mkdirSync('artifacts', { recursive: true });
+          fs.writeFileSync('artifacts/reproducible-build-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
+          NODE
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-reproducible-build-evidence
+          path: artifacts/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce reproducibility gates
+        if: always()
+        shell: bash
+        run: |
+          failures=0
+          if [ "${lint_exit_code:-1}" -ne 0 ]; then
+            echo "Lint gate failed; see artifacts/lint.log."
+            failures=1
+          fi
+          if [ "${normalized_manifest_exit_code:-1}" -ne 0 ]; then
+            echo "Narrowly normalized build manifests differ; see artifacts/build-normalized.diff."
+            failures=1
+          fi
+          exit "$failures"
