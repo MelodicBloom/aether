@@ -1,0 +1,130 @@
+name: Verify AETHER v0
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/aether-runnable-gallery-v0
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-aether-v0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Frozen install, static checks, build, and evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bootstrap missing lockfile only
+        id: lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f package-lock.json ]]; then
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+            echo "Using committed package-lock.json."
+            exit 0
+          fi
+
+          echo "package-lock.json is absent; generating the bounded repair artifact."
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          test -s package-lock.json
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Frozen dependency installation
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Record declared test surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification-evidence
+          node <<'NODE' > verification-evidence/test-surface.json
+          const pkg = require('./package.json');
+          const scripts = pkg.scripts || {};
+          const report = {
+            generatedAt: new Date().toISOString(),
+            repository: process.env.GITHUB_REPOSITORY,
+            commit: process.env.GITHUB_SHA,
+            declaredScripts: scripts,
+            surfaces: {
+              frozenInstall: 'npm ci --ignore-scripts --no-audit --no-fund',
+              typecheck: scripts.typecheck || null,
+              lint: scripts.lint || null,
+              build: scripts.build || null,
+              unit: scripts.test || null,
+              e2e: scripts.e2e || scripts['test:e2e'] || null,
+              visualRegression: scripts.visual || scripts['test:visual'] || null,
+              webglSmoke: 'manual plan documented in docs/verification/WEBGL_SMOKE_TEST.md',
+              accessibility: 'manual checklist documented in docs/verification/ACCESSIBILITY_CHECKLIST.md'
+            },
+            interpretation: 'null means not declared, not passed'
+          };
+          process.stdout.write(JSON.stringify(report, null, 2));
+          NODE
+          sha256sum package-lock.json | tee verification-evidence/package-lock.sha256
+          cat verification-evidence/test-surface.json
+
+      - name: Create deterministic build archive and digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d .next
+          tar --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf verification-evidence/aether-next-build.tar .next
+          sha256sum verification-evidence/aether-next-build.tar \
+            | tee verification-evidence/aether-next-build.sha256
+
+      - name: Commit verified lockfile repair
+        if: steps.lockfile.outputs.generated == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git diff --cached --name-only | grep -qx 'package-lock.json'
+          git commit -m "build: add verified AETHER lockfile"
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+
+      - name: Upload retained verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-v0-verification-${{ github.sha }}
+          path: |
+            verification-evidence/test-surface.json
+            verification-evidence/package-lock.sha256
+            verification-evidence/aether-next-build.sha256
+            verification-evidence/aether-next-build.tar
+          if-no-files-found: error
+          retention-days: 30
