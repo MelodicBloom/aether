@@ -28,8 +28,31 @@ Validation commands:
 
 ```bash
 npm run typecheck
+npm run lint
 npm run build
 ```
+
+## Verification status
+
+The verification workflow is defined in `.github/workflows/verify-aether-v0.yml` and is intentionally strict:
+
+1. require `package-lock.json`
+2. install frozen dependencies with `npm ci`
+3. run typecheck
+4. run lint
+5. run the production build
+6. record the explicitly declared test surface
+7. create a deterministic build archive and SHA-256 digest
+8. retain verification evidence as a GitHub Actions artifact
+
+A frozen installation cannot currently complete because this branch does not contain `package-lock.json`. The workflow reports that as a blocking failure and does not silently fall back to `npm install`. Adding or repairing the lockfile requires separate approval because the lockfile is outside the default verification-only scope.
+
+Manual verification plans:
+
+- [`docs/verification/WEBGL_SMOKE_TEST.md`](./docs/verification/WEBGL_SMOKE_TEST.md)
+- [`docs/verification/ACCESSIBILITY_CHECKLIST.md`](./docs/verification/ACCESSIBILITY_CHECKLIST.md)
+
+A missing test script is reported as **not declared**, never as passed.
 
 ## Architecture
 
