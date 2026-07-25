@@ -1,21 +1,30 @@
 # AETHER Reproducible Build Evidence
 
-Status: draft evidence gate
+Status: draft evidence gate  
 Scope: build and verification infrastructure only
 
 ## Purpose
 
-Establish an honest frozen dependency resolution, verify the current Next.js application twice from the same lockfile, and record the WebGL evidence surface without changing shaders, uniforms, tokens, product behavior, deployment settings, or secrets.
+Verify the current Next.js application twice from one reviewed lockfile and record the WebGL evidence surface without changing shaders, uniforms, tokens, product behavior, deployment settings, or secrets.
+
+## Stack topology
+
+This evidence PR is based on `feat/aether-runnable-gallery-v0`.
+
+- PR #2 previously delivered the runnable gallery to `main`.
+- PR #3 later merged the reviewed `package-lock.json`, pinned ESLint dependencies, `.eslintrc.json`, and frozen-build repair onto the retained runnable-gallery branch.
+- PR #7 consumes that repaired branch and adds raw-versus-normalized reproducibility evidence plus the WebGL evidence inventory.
+
+After PR #7 is approved, the repaired branch must be promoted to current `main` through one bounded PR. Do not independently cherry-pick overlapping lockfile, lint, or workflow files.
 
 ## Evidence sequence
 
 ```text
-package.json
-→ generated package-lock.json candidate
+committed package.json + package-lock.json
 → lockfile SHA-256
 → npm ci
 → strict TypeScript
-→ captured lint result
+→ noninteractive lint
 → production build A
 → raw + narrowly normalized manifests A
 → clean production build B
@@ -23,45 +32,34 @@ package.json
 → raw variance report
 → normalized comparison gate
 → WebGL evidence inventory
-→ retained artifact receipt
+→ retained execution receipt
 ```
 
-## Lockfile policy
-
-The workflow initially generates `package-lock.json` from the exact committed `package.json` using the public npm registry. The candidate lockfile is retained as an artifact for review.
-
-It is not canonical until:
-
-1. dependency resolution succeeds;
-2. `npm ci` succeeds using that candidate;
-3. typecheck and both production builds succeed;
-4. lint has a noninteractive, reviewed configuration;
-5. the narrowly normalized build manifests match;
-6. the lockfile is reviewed and committed in a lockfile-only commit;
-7. a later workflow run uses the committed lockfile without regeneration.
+The workflow may generate a lockfile candidate only when a target branch lacks one. On the repaired stack, `generatedLockfile` must be `false`; regeneration is a blocking topology error.
 
 ## Raw versus normalized reproducibility
 
-The workflow preserves two separate comparisons.
+The workflow preserves two comparisons.
 
 ### Raw manifest
 
-Every regular output file except cache, `BUILD_ID`, and trace files is SHA-256 hashed without rewriting. Raw differences are retained as evidence and are not treated as identical.
+Regular output files are SHA-256 hashed without rewriting, excluding cache, `BUILD_ID`, and trace files. Raw differences remain evidence and are not described as byte-identical.
 
-Next.js currently introduces build-specific values including generated build IDs, preview-mode credentials, and server-action encryption keys. Raw output may therefore differ even when source and dependencies are unchanged.
+Next.js may introduce build-specific values including generated build IDs, preview-mode credentials, server-action encryption keys, and trace-manifest file ordering.
 
 ### Narrowly normalized manifest
 
-`tests/normalize-next-build.mjs` normalizes only declared framework/runtime variance:
+`tests/normalize-next-build.mjs` may normalize only:
 
 - the current Next `BUILD_ID` value and its path segment;
 - the absolute workspace path;
 - `previewModeId`;
 - `previewModeSigningKey`;
 - `previewModeEncryptionKey`;
-- `encryptionKey`.
+- `encryptionKey`;
+- ordering of the `files` set in Next `.nft.json` trace manifests.
 
-It canonicalizes JSON key order and leaves all other content and binary files unchanged. The normalized manifest is the reproducibility gate. Any additional normalization requires a reviewed documentation change; unknown variance must not be hidden.
+It canonicalizes JSON key order and leaves all other content and binary files unchanged. Unknown variance remains blocking. Any additional normalization requires a reviewed documentation change.
 
 Excluded files are:
 
@@ -71,9 +69,18 @@ Excluded files are:
 
 ## Lint evidence
 
-The current `next lint` command opens an interactive configuration prompt because the repository has no committed ESLint configuration. The workflow records the prompt and exit status, continues gathering build evidence, and fails at the final gate.
+The repaired base branch supplies a committed, noninteractive ESLint configuration compatible with the pinned Next.js toolchain. This PR does not alter lint policy or dependency versions.
 
-A separate bounded remediation must define ESLint configuration and any required development dependencies. This evidence PR does not change `package.json` or silently choose a lint profile.
+A passing evidence run must demonstrate:
+
+```text
+npm ci
+npm run typecheck
+npm run lint
+npm run build
+```
+
+If lint becomes interactive, regenerates configuration, or changes dependency resolution, the gate fails and the repair must remain in a separate bounded configuration PR.
 
 ## WebGL evidence classification
 
@@ -81,13 +88,13 @@ A separate bounded remediation must define ESLint configuration and any required
 
 - `proven`: a corresponding implementation signal is present;
 - `missing`: a required baseline is absent and fails the job;
-- `not-proven`: source inspection cannot establish the behavior and a browser test or remediation issue is required.
+- `not-proven`: static inspection cannot establish behavior and a browser test is required.
 
-Static inspection is not represented as runtime proof.
+Static inspection is never represented as runtime proof.
 
-## Known runtime evidence still required
+## Runtime evidence still required
 
-- WebGL-unavailable visible fallback;
+- visible, accessible WebGL-unavailable fallback;
 - context loss and restoration;
 - shader-fetch cancellation;
 - reduced-motion render-loop behavior;
@@ -95,9 +102,7 @@ Static inspection is not represented as runtime proof.
 - keyboard drawer behavior and focus return;
 - canvas fallback semantics.
 
-Current source inspection does prove a client boundary, animation-frame cleanup, explicit GPU resource-deletion calls, and a canvas accessible name. Runtime tests remain necessary.
-
-These gaps do not authorize source changes in this PR. Each must become a separate bounded issue after the build contract is stable.
+Current source inspection may prove implementation signals such as a client boundary, animation-frame cleanup, explicit GPU resource deletion, and a canvas accessible name. Runtime behavior remains owned by issue #9.
 
 ## Changed-file boundary
 
@@ -108,7 +113,6 @@ Allowed:
 docs/verification/REPRODUCIBLE_BUILD_EVIDENCE.md
 tests/webgl-evidence.mjs
 tests/normalize-next-build.mjs
-package-lock.json  # only after artifact review
 ```
 
 Forbidden:
@@ -117,22 +121,26 @@ Forbidden:
 src/**
 public/shaders/**
 package.json
+package-lock.json
+.eslintrc.json
 visual tokens
 deployment files
 secrets
 ```
 
+The forbidden lockfile and lint files are inherited from the repaired base and must not be rewritten in this evidence PR.
+
 ## Approval gate
 
 Keep the PR draft until:
 
-- a committed lockfile is used by `npm ci`;
-- strict typecheck and both builds pass;
+- the committed lockfile is consumed without regeneration;
+- frozen install, typecheck, lint, and both builds pass;
 - narrowly normalized manifests match;
-- lint is noninteractive and passes;
-- WebGL `not-proven` items are filed as explicit remediation issues;
+- raw variance remains retained as evidence;
+- WebGL `not-proven` items remain explicit and issue-linked;
 - Jennipher approves the exact evidence-only inventory.
 
 ## Rollback
 
-Close the PR. No product or dependency-manifest behavior is changed until the lockfile and separate lint remediation are reviewed.
+Close the PR. Product behavior and dependency configuration remain unchanged by this branch.
