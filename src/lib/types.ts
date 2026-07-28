@@ -17,7 +17,19 @@ export type PresetFamily =
   | 'lorenz-field'
   | 'reaction-diffusion'
   | 'phyllotaxis'
-  | 'mycelial-field';
+  | 'mycelial-field'
+  | 'bose-einstein'
+  | 'chladni-resonance'
+  | 'ferrofluid'
+  | 'standing-wave'
+  | 'caustic-lens'
+  | 'soap-film'
+  | 'polarization-field'
+  | 'gravitational-lensing'
+  | 'voronoi-growth'
+  | 'electromagnetic-flux'
+  | 'curl-vorticity'
+  | 'flow-networks';
 
 export type PresetTier = 'free' | 'paid';
 
