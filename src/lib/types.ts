@@ -6,7 +6,11 @@ export type PresetFamily =
   | 'holographic'
   | 'liquid-metal'
   | 'velvet'
-  | 'crystal';
+  | 'crystal'
+  | 'plasma'
+  | 'opal-glass'
+  | 'magnetic-ink'
+  | 'electric-mesh';
 
 export type PresetTier = 'free' | 'paid';
 
