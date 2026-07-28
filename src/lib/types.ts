@@ -7,10 +7,16 @@ export type PresetFamily =
   | 'liquid-metal'
   | 'velvet'
   | 'crystal'
-  | 'plasma'
+  | 'ion-bloom'
   | 'opal-glass'
   | 'magnetic-ink'
-  | 'electric-mesh';
+  | 'electric-mesh'
+  | 'quantum-knot'
+  | 'wave-function'
+  | 'lorenz-field'
+  | 'reaction-diffusion'
+  | 'phyllotaxis'
+  | 'branch-lattice';
 
 export type PresetTier = 'free' | 'paid';
 
