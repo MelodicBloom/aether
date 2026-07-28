@@ -1,4 +1,13 @@
-export type PresetFamily = 'thin-film' | 'shell' | 'aurora' | 'fresnel' | 'holographic';
+export type PresetFamily =
+  | 'thin-film'
+  | 'shell'
+  | 'aurora'
+  | 'fresnel'
+  | 'holographic'
+  | 'liquid-metal'
+  | 'velvet'
+  | 'crystal';
+
 export type PresetTier = 'free' | 'paid';
 
 export type UniformSpec = {
@@ -9,6 +18,8 @@ export type UniformSpec = {
   structure: number;
   spectral: number;
   edge: number;
+  flow: number;
+  depth: number;
 };
 
 export type PresetDefinition = {
@@ -24,4 +35,17 @@ export type PresetDefinition = {
   motionToken: string;
   sourceGalleryRef?: string;
   uniformsDefault: UniformSpec;
+};
+
+export type InteractionSignature = {
+  id: string;
+  component: 'button' | 'switch' | 'scrollbar' | 'surface';
+  listensFor: string[];
+  output: string;
+  durationMs: number;
+  distancePx: number;
+  easing: string;
+  curvature: string;
+  dynamics: string;
+  activeState: string;
 };
