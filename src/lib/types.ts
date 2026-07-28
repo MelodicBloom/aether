@@ -5,6 +5,10 @@ export type UniformSpec = {
   speed: number;
   intensity: number;
   scale: number;
+  family: number;
+  structure: number;
+  spectral: number;
+  edge: number;
 };
 
 export type PresetDefinition = {
