@@ -27,23 +27,57 @@ export function ShaderCanvas({ src, uniforms }: { src: string; uniforms: Uniform
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     let frame = 0;
     let disposed = false;
-    let visible = true;
+    let running = false;
+    let visible = false;
+    let gl: WebGLRenderingContext | null = null;
+    let program: WebGLProgram | null = null;
+    let fragmentSource = '';
+    let started = performance.now();
 
-    const observer = new IntersectionObserver(([entry]) => {
-      visible = entry.isIntersecting;
-    }, { rootMargin: '160px' });
-    observer.observe(canvas);
+    const destroy = () => {
+      cancelAnimationFrame(frame);
+      running = false;
+      if (gl && program) gl.deleteProgram(program);
+      program = null;
+      gl = null;
+      canvas.width = 1;
+      canvas.height = 1;
+    };
 
-    const run = async () => {
-      const fragmentSource = await fetch(src, { cache: 'no-store' }).then((response) => {
-        if (!response.ok) throw new Error(`Unable to load ${src}`);
-        return response.text();
-      });
-      if (disposed) return;
+    const draw = () => {
+      if (disposed || !running || !gl || !program) return;
+      if (!document.hidden && visible) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const width = Math.max(2, Math.round(canvas.clientWidth * dpr));
+        const height = Math.max(2, Math.round(canvas.clientHeight * dpr));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        gl.viewport(0, 0, width, height);
+        const location = (name: string) => gl!.getUniformLocation(program!, name);
+        gl.uniform1f(location('u_time'), (performance.now() - started) / 1000);
+        gl.uniform2f(location('u_res'), width, height);
+        gl.uniform1f(location('u_speed'), uniforms.speed);
+        gl.uniform1f(location('u_intensity'), uniforms.intensity);
+        gl.uniform1f(location('u_scale'), uniforms.scale);
+        gl.uniform1f(location('u_family'), uniforms.family);
+        gl.uniform1f(location('u_structure'), uniforms.structure);
+        gl.uniform1f(location('u_spectral'), uniforms.spectral);
+        gl.uniform1f(location('u_edge'), uniforms.edge);
+        gl.uniform1f(location('u_flow'), uniforms.flow);
+        gl.uniform1f(location('u_depth'), uniforms.depth);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+      frame = requestAnimationFrame(draw);
+    };
 
-      const gl = canvas.getContext('webgl', {
+    const start = () => {
+      if (disposed || running || !visible || !fragmentSource) return;
+      gl = canvas.getContext('webgl', {
         alpha: false,
         antialias: false,
         depth: false,
@@ -52,79 +86,62 @@ export function ShaderCanvas({ src, uniforms }: { src: string; uniforms: Uniform
         preserveDrawingBuffer: false,
         powerPreference: 'high-performance'
       });
-      if (!gl) throw new Error('WebGL is unavailable');
+      if (!gl) return;
 
-      const program = gl.createProgram();
-      if (!program) throw new Error('Unable to create WebGL program');
+      program = gl.createProgram();
+      if (!program) return;
       gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, vertexSource));
       gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, fragmentSource));
       gl.linkProgram(program);
       if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error(gl.getProgramInfoLog(program) ?? 'Program link failed');
+        console.error('[AETHER ShaderCanvas]', gl.getProgramInfoLog(program));
+        destroy();
+        return;
       }
       gl.useProgram(program);
-
       const buffer = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      // One oversized triangle covers the viewport without an internal shared edge.
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
       const position = gl.getAttribLocation(program, 'position');
       gl.enableVertexAttribArray(position);
       gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-
-      const locations = {
-        time: gl.getUniformLocation(program, 'u_time'),
-        resolution: gl.getUniformLocation(program, 'u_res'),
-        speed: gl.getUniformLocation(program, 'u_speed'),
-        intensity: gl.getUniformLocation(program, 'u_intensity'),
-        scale: gl.getUniformLocation(program, 'u_scale'),
-        family: gl.getUniformLocation(program, 'u_family'),
-        structure: gl.getUniformLocation(program, 'u_structure'),
-        spectral: gl.getUniformLocation(program, 'u_spectral'),
-        edge: gl.getUniformLocation(program, 'u_edge'),
-        flow: gl.getUniformLocation(program, 'u_flow'),
-        depth: gl.getUniformLocation(program, 'u_depth')
-      };
-      const started = performance.now();
-
-      const resize = () => {
-        const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
-        const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
-        const height = Math.max(1, Math.round(canvas.clientHeight * dpr));
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width;
-          canvas.height = height;
-        }
-        gl.viewport(0, 0, width, height);
-      };
-
-      const draw = () => {
-        if (disposed) return;
-        if (visible && !document.hidden) {
-          resize();
-          gl.uniform1f(locations.time, (performance.now() - started) / 1000);
-          gl.uniform2f(locations.resolution, canvas.width, canvas.height);
-          gl.uniform1f(locations.speed, uniforms.speed);
-          gl.uniform1f(locations.intensity, uniforms.intensity);
-          gl.uniform1f(locations.scale, uniforms.scale);
-          gl.uniform1f(locations.family, uniforms.family);
-          gl.uniform1f(locations.structure, uniforms.structure);
-          gl.uniform1f(locations.spectral, uniforms.spectral);
-          gl.uniform1f(locations.edge, uniforms.edge);
-          gl.uniform1f(locations.flow, uniforms.flow);
-          gl.uniform1f(locations.depth, uniforms.depth);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-        }
-        frame = requestAnimationFrame(draw);
-      };
+      started = performance.now();
+      running = true;
       draw();
     };
 
-    run().catch((error) => console.error('[AETHER ShaderCanvas]', error));
+    const onLost = (event: Event) => {
+      event.preventDefault();
+      destroy();
+    };
+    const onRestored = () => start();
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
+
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible) start();
+      else destroy();
+    }, { rootMargin: '320px 0px', threshold: 0.01 });
+    observer.observe(canvas);
+
+    fetch(src, { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Unable to load ${src}`);
+        return response.text();
+      })
+      .then((source) => {
+        fragmentSource = source;
+        start();
+      })
+      .catch((error) => console.error('[AETHER ShaderCanvas]', error));
+
     return () => {
       disposed = true;
       observer.disconnect();
-      cancelAnimationFrame(frame);
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
+      destroy();
     };
   }, [src, uniforms.depth, uniforms.edge, uniforms.family, uniforms.flow, uniforms.intensity, uniforms.scale, uniforms.spectral, uniforms.speed, uniforms.structure]);
 
