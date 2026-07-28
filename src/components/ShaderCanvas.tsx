@@ -32,10 +32,18 @@ export function ShaderCanvas({ src, uniforms }: { src: string; uniforms: Uniform
     let disposed = false;
     let running = false;
     let visible = false;
+    let failed = false;
     let gl: WebGLRenderingContext | null = null;
     let program: WebGLProgram | null = null;
     let fragmentSource = '';
     let started = performance.now();
+
+    const markFailed = (message: string) => {
+      failed = true;
+      canvas.dataset.shaderState = 'fallback';
+      canvas.style.background = 'radial-gradient(circle at 35% 30%, rgba(126,231,255,.18), transparent 35%), radial-gradient(circle at 70% 65%, rgba(255,86,196,.14), transparent 42%), #080a10';
+      console.warn(`[AETHER ShaderCanvas] ${message}`);
+    };
 
     const destroy = () => {
       cancelAnimationFrame(frame);
@@ -76,42 +84,56 @@ export function ShaderCanvas({ src, uniforms }: { src: string; uniforms: Uniform
     };
 
     const start = () => {
-      if (disposed || running || !visible || !fragmentSource) return;
-      gl = canvas.getContext('webgl', {
-        alpha: false,
-        antialias: false,
-        depth: false,
-        stencil: false,
-        premultipliedAlpha: false,
-        preserveDrawingBuffer: false,
-        powerPreference: 'high-performance'
-      });
-      if (!gl) return;
+      if (disposed || running || failed || !visible || !fragmentSource) return;
+      try {
+        gl = canvas.getContext('webgl', {
+          alpha: false,
+          antialias: false,
+          depth: false,
+          stencil: false,
+          premultipliedAlpha: false,
+          preserveDrawingBuffer: false,
+          powerPreference: 'high-performance'
+        });
+        if (!gl) {
+          markFailed('WebGL unavailable; showing static material fallback.');
+          return;
+        }
 
-      program = gl.createProgram();
-      if (!program) return;
-      gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, vertexSource));
-      gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, fragmentSource));
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error('[AETHER ShaderCanvas]', gl.getProgramInfoLog(program));
+        program = gl.createProgram();
+        if (!program) {
+          markFailed('Unable to create WebGL program.');
+          return;
+        }
+        gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, vertexSource));
+        gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, fragmentSource));
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          const message = gl.getProgramInfoLog(program) ?? 'Program link failed';
+          destroy();
+          markFailed(message);
+          return;
+        }
+        gl.useProgram(program);
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        const position = gl.getAttribLocation(program, 'position');
+        gl.enableVertexAttribArray(position);
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+        started = performance.now();
+        running = true;
+        canvas.dataset.shaderState = 'running';
+        draw();
+      } catch (error) {
         destroy();
-        return;
+        markFailed(error instanceof Error ? error.message : 'Shader compilation failed.');
       }
-      gl.useProgram(program);
-      const buffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-      const position = gl.getAttribLocation(program, 'position');
-      gl.enableVertexAttribArray(position);
-      gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-      started = performance.now();
-      running = true;
-      draw();
     };
 
     const onLost = (event: Event) => {
       event.preventDefault();
+      failed = false;
       destroy();
     };
     const onRestored = () => start();
@@ -134,7 +156,7 @@ export function ShaderCanvas({ src, uniforms }: { src: string; uniforms: Uniform
         fragmentSource = source;
         start();
       })
-      .catch((error) => console.error('[AETHER ShaderCanvas]', error));
+      .catch((error) => markFailed(error instanceof Error ? error.message : `Unable to load ${src}`));
 
     return () => {
       disposed = true;
