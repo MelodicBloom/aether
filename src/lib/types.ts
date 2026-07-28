@@ -8,6 +8,7 @@ export type PresetFamily =
   | 'velvet'
   | 'crystal'
   | 'ion-bloom'
+  | 'plasma-bloom'
   | 'opal-glass'
   | 'magnetic-ink'
   | 'electric-mesh'
@@ -16,7 +17,7 @@ export type PresetFamily =
   | 'lorenz-field'
   | 'reaction-diffusion'
   | 'phyllotaxis'
-  | 'branch-lattice';
+  | 'mycelial-field';
 
 export type PresetTier = 'free' | 'paid';
 
